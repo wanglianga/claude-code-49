@@ -1,0 +1,38 @@
+# 县域校车临时改线与学生到站安全服务
+# 项目名由环境变量 COMPOSE_PROJECT_NAME 固定，不要在此覆盖。
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: schoolbus
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-schoolbus_dev}
+      POSTGRES_DB: schoolbus
+      TZ: Asia/Shanghai
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schoolbus -d schoolbus"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    # 数据库仅在 compose 内部网络使用，不发布到宿主端口
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://schoolbus:${DB_PASSWORD:-schoolbus_dev}@db:5432/schoolbus?sslmode=disable
+      GRPC_ADDR: 0.0.0.0:9090
+      HTTP_ADDR: 0.0.0.0:8080
+      TZ: Asia/Shanghai
+      SEED_DEMO: "true"
+    ports:
+      # 仅发布应用 HTTP 端口到宿主（gRPC 9090 仅在内部网络/容器内使用）
+      - "${CC_PUBLISH_PORT}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  dbdata:

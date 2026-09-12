@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>县域校车安全服务 · 演示台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f0f4f8; color: #1f2933; }
+  header { background: #1b6ec2; color: #fff; padding: 14px 20px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header p { margin: 4px 0 0; font-size: 12px; opacity: .85; }
+  main { max-width: 1180px; margin: 16px auto; padding: 0 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #1b6ec2; }
+  .full { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 5px 6px; border-bottom: 1px solid #e4e9f0; text-align: left; }
+  th { color: #52606d; font-weight: 600; }
+  button { background: #1b6ec2; color: #fff; border: 0; border-radius: 6px; padding: 5px 10px; font-size: 12.5px; cursor: pointer; margin: 2px 2px 2px 0; }
+  button.ghost { background: #e4ebf5; color: #1b6ec2; }
+  button.warn { background: #c2410c; }
+  button:hover { filter: brightness(1.08); }
+  input, select { padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12.5px; margin: 2px 2px 2px 0; }
+  pre { background: #0f172a; color: #a5f3fc; padding: 10px; border-radius: 8px; font-size: 11.5px; max-height: 340px; overflow: auto; white-space: pre-wrap; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; background: #e4ebf5; color: #334e68; }
+  .tag.ok { background: #dcfce7; color: #166534; }
+  .tag.bad { background: #fee2e2; color: #991b1b; }
+  .tag.warn { background: #fef3c7; color: #92400e; }
+  .counts span { margin-right: 12px; font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  h3 { font-size: 13px; margin: 12px 0 6px; color: #334e68; }
+</style>
+</head>
+<body>
+<header>
+  <h1>县域校车临时改线与学生到站安全服务 · 演示台</h1>
+  <p>Go + gRPC + PostgreSQL ｜ 本页面通过 JSON 门面调用与 gRPC 相同的业务接口</p>
+</header>
+<main>
+  <div class="card full">
+    <h2>数据总览 <button class="ghost" onclick="loadOverview()">刷新</button></h2>
+    <div class="counts" id="counts">加载中…</div>
+    <h3>今日接送任务</h3>
+    <table id="trips"><tr><th>ID</th><th>线路</th><th>方向</th><th>车辆</th><th>司机</th><th>随车老师</th><th>计划发车</th><th>状态</th><th>降级</th></tr></table>
+  </div>
+
+  <div class="card">
+    <h2>任务操作（司机 / 随车老师）</h2>
+    <div class="row">
+      任务ID <input id="tripId" size="4" value="1">
+      学生ID <input id="stuId" size="4" value="1">
+      站点ID <input id="stopId" size="4" value="1">
+    </div>
+    <h3>发车前准备</h3>
+    <button onclick="act('confirm-vehicle',{driver_id:1,fuel_liters:118,note:'车况正常，油量充足'})">司机确认车辆</button>
+    <button onclick="act('confirm-roster',{escort_id:1,note:'名单已核对'})">随车老师确认名单</button>
+    <button onclick="act('start',{})">发车</button>
+    <button onclick="act('arrive-stop',{stop_id:num('stopId')})">到达站点</button>
+    <h3>上下车核验</h3>
+    <button onclick="act('board',{student_id:num('stuId'),stop_id:num('stopId'),dropped_off_by:val('person'),actor:'escort:1'})">上车核验</button>
+    <button onclick="act('alight',{student_id:num('stuId'),stop_id:num('stopId'),receiver_name:val('person'),actor:'escort:1'})">下车核验</button>
+    <button class="warn" onclick="act('absent',{student_id:num('stuId'),stop_id:num('stopId'),actor:'escort:1'})">标记缺乘</button>
+    <button onclick="act('contact',{student_id:num('stuId'),phone:'13900010001',result:'家长马上送到',actor:'escort:1'})">电话联系家长</button>
+    <button onclick="post('/api/wait-records/update',{wait_record_id:num('waitId'),wait_seconds:300,skip_allowed:true,teacher_involved:true,resolved:true,resolution:'家长同意跳站'})">跳站/班主任介入</button>
+    等待记录 <input id="waitId" size="3" value="1">
+    <h3>改线 / 异常 / 完成</h3>
+    <button class="warn" onclick="act('reroute',{reason:'REROUTE_ROAD_CLOSURE',detail:'前方临时封路，绕行乡道',added_delay_min:15,extra_km:6.5,initiated_by:'driver:1'})">发起改线</button>
+    <button class="warn" onclick="act('exceptions',{type:'EX_NO_SIGNAL',detail:'柳树湾段无信号',reported_by:'driver:1'})">上报异常(无信号)</button>
+    <button onclick="act('sync-offline',{actor:'escort:1',events:[{event_type:'board',student_id:num('stuId'),stop_id:num('stopId'),note:'离线补录'}]})">离线事件补录</button>
+    <button onclick="act('complete',{})">完成任务</button>
+    <button onclick="act('homeroom-confirm',{student_id:num('stuId'),teacher_name:'王莉',status:'HM_SAFE_AT_SCHOOL'})">班主任确认</button>
+    <div class="row">接送人 <input id="person" size="8" value="张建国"></div>
+  </div>
+
+  <div class="card">
+    <h2>查询（家长 / 学校 / 教育局）</h2>
+    <h3>任务详情与轨迹</h3>
+    <button class="ghost" onclick="getJson('/api/trips/'+num('tripId'))">任务详情</button>
+    <button class="ghost" onclick="getJson('/api/trips/'+num('tripId')+'/trace')">全程轨迹</button>
+    <button class="ghost" onclick="getJson('/api/trips/'+num('tripId')+'/rollcall')">学校点名</button>
+    <button class="ghost" onclick="getJson('/api/trips/'+num('tripId')+'/reroutes')">改线记录</button>
+    <h3>家长端</h3>
+    <button class="ghost" onclick="getJson('/api/students/'+num('stuId')+'/trip-status')">学生乘车状态/ETA</button>
+    <div class="row">手机号 <input id="phone" size="11" value="13900010001">
+    <button class="ghost" onclick="getJson('/api/notifications?phone='+val('phone'))">家长通知</button></div>
+    <button onclick="post('/api/students/'+num('stuId')+'/self-pickup',{guardian_phone:val('phone'),note:'今天自己接'})">改为自接</button>
+    <button onclick="post('/api/students/'+num('stuId')+'/club',{club_name:'足球社团'})">参加社团</button>
+    <button onclick="post('/api/students/'+num('stuId')+'/guardian-swap',{temp_name:'王叔叔',temp_phone:'13966668888',relation:'邻居',guardian_phone:val('phone')})">临时换人接送</button>
+    <button onclick="post('/api/students/leave',{student_id:num('stuId'),reason:'感冒发烧',reported_by:'guardian:13900010001'})">临时请假</button>
+    <h3>教育局</h3>
+    <div class="row">线路ID <input id="routeId" size="3" value="1">
+    <button class="ghost" onclick="getJson('/api/audit/routes/'+num('routeId')+'/fulfillment')">线路履约抽查</button></div>
+  </div>
+
+  <div class="card full">
+    <h2>结果输出</h2>
+    <pre id="out">点击上方按钮执行业务操作…</pre>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const num = id => Number($(id).value || 0);
+const val = id => $(id).value;
+function show(obj){ $('out').textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2); }
+async function getJson(url){
+  try { const r = await fetch(url); show(await r.json()); } catch(e){ show('请求失败: '+e); }
+}
+async function post(url, body){
+  try {
+    const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
+    show(await r.json());
+  } catch(e){ show('请求失败: '+e); }
+}
+function act(action, body){ post('/api/trips/'+num('tripId')+'/'+action, body); }
+async function loadOverview(){
+  const o = await (await fetch('/api/overview')).json();
+  $('counts').innerHTML = ['schools','classes','students','guardians','stops','vehicles','drivers','escorts','routes','schedules']
+    .map(k=>`<span>${k}: <b>${o[k]??0}</b></span>`).join('');
+  const rows = (o.today_trips||[]).map(t=>`<tr>
+    <td>${t.id}</td><td>${t.route_name}</td><td>${dirName(t.direction)}</td><td>${t.vehicle_plate}</td>
+    <td>${t.driver_name}</td><td>${t.escort_name}</td><td>${t.planned_departure}</td>
+    <td><span class="tag ${tagClass(t.status)}">${t.status}</span></td>
+    <td>${t.offline_mode?'<span class="tag bad">离线</span>':'-'}</td></tr>`).join('');
+  $('trips').innerHTML = '<tr><th>ID</th><th>线路</th><th>方向</th><th>车辆</th><th>司机</th><th>随车老师</th><th>计划发车</th><th>状态</th><th>降级</th></tr>'+rows;
+}
+function dirName(d){ return d==='DIRECTION_MORNING_PICKUP'?'早接':d==='DIRECTION_AFTERNOON_DROPOFF'?'晚送':d; }
+function tagClass(s){ if(s==='TRIP_STATUS_CLOSED')return 'ok'; if(s==='TRIP_STATUS_IN_PROGRESS')return 'warn'; return ''; }
+loadOverview();
+</script>
+</body>
+</html>

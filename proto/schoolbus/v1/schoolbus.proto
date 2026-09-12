@@ -1,0 +1,760 @@
+syntax = "proto3";
+
+package schoolbus.v1;
+
+option go_package = "schoolbus/gen/schoolbusv1;schoolbusv1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// 县域校车临时改线与学生到站安全服务
+//   - AdminService   学校基础数据维护（学生/班级/授权/站点/时段/车辆/人员/线路/排班）
+//   - TripService    每日接送任务：发车前准备 -> 上下车核验 -> 缺乘处置 -> 完成 -> 班主任确认
+//   - RerouteService 临时改线：重算ETA、影响学生、家长通知、学校点名、车辆油耗
+//   - ParentService  家长端：预计到站时间、通知、自接/换人/社团/请假
+//   - AuditService   学校点名与教育局线路履约抽查
+// ============================================================================
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DIRECTION_MORNING_PICKUP = 1;    // 早晨接学生到校
+  DIRECTION_AFTERNOON_DROPOFF = 2; // 下午放学送回家
+}
+
+enum TripStatus {
+  TRIP_STATUS_UNSPECIFIED = 0;
+  TRIP_STATUS_SCHEDULED = 1;    // 已生成待准备
+  TRIP_STATUS_PREPARING = 2;    // 司机已确认车辆
+  TRIP_STATUS_READY = 3;        // 随车老师已确认名单，可发车
+  TRIP_STATUS_IN_PROGRESS = 4;  // 在途
+  TRIP_STATUS_COMPLETED = 5;    // 接送完成
+  TRIP_STATUS_CLOSED = 6;       // 班主任已确认全部学生状态，任务闭环
+}
+
+enum TripStudentStatus {
+  TRIP_STUDENT_STATUS_UNSPECIFIED = 0;
+  TS_EXPECTED = 1;        // 应乘
+  TS_ON_LEAVE = 2;        // 临时请假
+  TS_SELF_PICKUP = 3;     // 家长改为自接
+  TS_CLUB_ACTIVITY = 4;   // 临时参加社团，不乘车
+  TS_BOARDED = 5;         // 已上车
+  TS_ALIGHTED = 6;        // 已下车
+  TS_ABSENT = 7;          // 缺乘（站点未出现）
+  TS_SKIPPED = 8;         // 跳站/不再接送
+  TS_WRONG_BUS = 9;       // 坐错车
+  TS_NO_RECEIVER = 10;    // 到站无人接，随车滞留
+}
+
+enum RerouteReason {
+  REROUTE_REASON_UNSPECIFIED = 0;
+  REROUTE_ROAD_CONSTRUCTION = 1; // 道路施工
+  REROUTE_HEAVY_RAIN = 2;        // 暴雨
+  REROUTE_VEHICLE_BREAKDOWN = 3; // 车辆故障
+  REROUTE_ROAD_CLOSURE = 4;      // 临时封路
+  REROUTE_CONGESTION = 5;        // 站点附近拥堵
+  REROUTE_OTHER = 6;
+}
+
+enum ExceptionType {
+  EXCEPTION_TYPE_UNSPECIFIED = 0;
+  EX_VEHICLE_OFFLINE = 1;      // 车辆离线
+  EX_ESCORT_PHONE_DEAD = 2;    // 随车老师手机没电
+  EX_GUARDIAN_SWAP = 3;        // 家长临时换人接送
+  EX_NO_SIGNAL = 4;            // 乡村道路无信号
+  EX_CLASS_RESCHEDULED = 5;    // 学校临时调课
+  EX_WRONG_BUS = 6;            // 学生坐错车
+  EX_NO_RECEIVER = 7;          // 到站无人接
+  EX_OTHER = 8;
+}
+
+enum ExceptionStatus {
+  EXCEPTION_STATUS_UNSPECIFIED = 0;
+  EX_STATUS_OPEN = 1;
+  EX_STATUS_RESOLVED = 2;
+}
+
+enum HomeroomStatus {
+  HOMEROOM_STATUS_UNSPECIFIED = 0;
+  HM_SAFE_AT_SCHOOL = 1;  // 安全到校
+  HM_SAFE_AT_HOME = 2;    // 安全到家
+  HM_EXCEPTION = 3;       // 状态异常，需跟进
+}
+
+// ============================================================================
+// 基础数据
+// ============================================================================
+
+message School {
+  int64 id = 1;
+  string name = 2;
+  string address = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message Class {
+  int64 id = 1;
+  int64 school_id = 2;
+  string name = 3;
+  string grade = 4;
+  string homeroom_teacher = 5; // 班主任
+  string homeroom_phone = 6;
+}
+
+message Student {
+  int64 id = 1;
+  int64 class_id = 2;
+  string class_name = 3;
+  string name = 4;
+  string student_no = 5;
+  string gender = 6;
+  int64 family_id = 7; // 同一 family_id 视为兄弟姐妹
+  string status = 8;
+}
+
+message Guardian {
+  int64 id = 1;
+  int64 student_id = 2;
+  string name = 3;
+  string relation = 4;
+  string phone = 5;
+  bool is_primary = 6;
+}
+
+// 家长授权 / 代送授权 / 临时换人授权
+message PickupAuthorization {
+  int64 id = 1;
+  int64 student_id = 2;
+  string authorized_name = 3;
+  string authorized_phone = 4;
+  string relation = 5;
+  string auth_type = 6;   // regular | temporary
+  string valid_date = 7;  // temporary 时生效的日期 YYYY-MM-DD，空表示长期
+  string created_by = 8;
+}
+
+message Stop {
+  int64 id = 1;
+  int64 school_id = 2;
+  string name = 3;
+  string address = 4;
+  double latitude = 5;
+  double longitude = 6;
+}
+
+// 接送时段
+message TimeWindow {
+  int64 id = 1;
+  int64 school_id = 2;
+  string name = 3;
+  Direction direction = 4;
+  string start_time = 5; // HH:MM
+  string end_time = 6;
+}
+
+message Vehicle {
+  int64 id = 1;
+  string plate_no = 2;
+  int32 capacity = 3;
+  double fuel_liters = 4;   // 当前油量(升)
+  double fuel_per_km = 5;   // 每公里油耗(升)
+  string status = 6;
+}
+
+message Driver {
+  int64 id = 1;
+  string name = 2;
+  string phone = 3;
+  string license_no = 4;
+}
+
+message Escort {
+  int64 id = 1;
+  string name = 2;
+  string phone = 3;
+  int64 school_id = 4;
+}
+
+message RouteStop {
+  int64 stop_id = 1;
+  string stop_name = 2;
+  int32 seq = 3;
+  int32 offset_min = 4; // 距发车的计划分钟数
+}
+
+message Route {
+  int64 id = 1;
+  int64 school_id = 2;
+  string name = 3;
+  Direction direction = 4;
+  bool active = 5;
+  repeated RouteStop stops = 6;
+}
+
+message CreateRouteRequest {
+  int64 school_id = 1;
+  string name = 2;
+  Direction direction = 3;
+  repeated RouteStop stops = 4;
+}
+
+// 学生-线路-站点分配
+message StudentRouteAssignment {
+  int64 id = 1;
+  int64 student_id = 2;
+  int64 route_id = 3;
+  int64 stop_id = 4;
+  Direction direction = 5;
+}
+
+// 临时请假
+message LeaveRecord {
+  int64 id = 1;
+  int64 student_id = 2;
+  string leave_date = 3; // YYYY-MM-DD
+  string reason = 4;
+  string reported_by = 5;
+}
+
+// 每日排班
+message Schedule {
+  int64 id = 1;
+  int64 route_id = 2;
+  int64 vehicle_id = 3;
+  int64 driver_id = 4;
+  int64 escort_id = 5;
+  string service_date = 6; // YYYY-MM-DD
+  Direction direction = 7;
+  string planned_departure = 8; // HH:MM
+  string status = 9;
+}
+
+message GetOverviewRequest {}
+
+message Overview {
+  int64 schools = 1;
+  int64 classes = 2;
+  int64 students = 3;
+  int64 guardians = 4;
+  int64 stops = 5;
+  int64 vehicles = 6;
+  int64 drivers = 7;
+  int64 escorts = 8;
+  int64 routes = 9;
+  int64 schedules = 10;
+  repeated Trip today_trips = 11;
+  repeated Student student_list = 12;
+  repeated Vehicle vehicle_list = 13;
+  repeated Route route_list = 14;
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string service = 1;
+  string version = 2;
+  google.protobuf.Timestamp server_time = 3;
+}
+
+// ============================================================================
+// 接送任务
+// ============================================================================
+
+message Trip {
+  int64 id = 1;
+  int64 schedule_id = 2;
+  int64 route_id = 3;
+  string route_name = 4;
+  int64 vehicle_id = 5;
+  string vehicle_plate = 6;
+  int64 driver_id = 7;
+  string driver_name = 8;
+  int64 escort_id = 9;
+  string escort_name = 10;
+  string service_date = 11;
+  Direction direction = 12;
+  TripStatus status = 13;
+  string planned_departure = 14;
+  google.protobuf.Timestamp vehicle_confirmed_at = 15;
+  google.protobuf.Timestamp roster_confirmed_at = 16;
+  google.protobuf.Timestamp actual_departure = 17;
+  google.protobuf.Timestamp actual_arrival = 18;
+  int32 current_seq = 19;
+  bool offline_mode = 20; // 车辆离线/无信号等降级状态
+  int32 delay_min = 21;   // 累计改线延误分钟
+}
+
+message TripStudent {
+  int64 id = 1;
+  int64 trip_id = 2;
+  int64 student_id = 3;
+  string student_name = 4;
+  string class_name = 5;
+  int64 stop_id = 6;
+  string stop_name = 7;
+  TripStudentStatus status = 8;
+  google.protobuf.Timestamp boarded_at = 9;
+  google.protobuf.Timestamp alighted_at = 10;
+  string note = 11;
+  int64 family_id = 12;
+}
+
+message StopEta {
+  int64 stop_id = 1;
+  string stop_name = 2;
+  int32 seq = 3;
+  google.protobuf.Timestamp planned_eta = 4;
+  google.protobuf.Timestamp current_eta = 5;
+  string status = 6; // pending | arrived | skipped
+}
+
+message TripDetail {
+  Trip trip = 1;
+  repeated TripStudent students = 2;
+  repeated StopEta etas = 3;
+  repeated Exception open_exceptions = 4;
+}
+
+message TripEvent {
+  int64 id = 1;
+  int64 trip_id = 2;
+  string event_type = 3;
+  int64 student_id = 4;
+  string student_name = 5;
+  int64 stop_id = 6;
+  string stop_name = 7;
+  string actor = 8;
+  google.protobuf.Struct detail = 9;
+  bool offline = 10; // 离线期间产生、恢复后补录
+  google.protobuf.Timestamp occurred_at = 11;
+  google.protobuf.Timestamp synced_at = 12;
+}
+
+// 异常与降级处置记录（车辆离线/手机没电/无信号/调课/坐错车/无人接等）
+message Exception {
+  int64 id = 1;
+  int64 trip_id = 2;
+  ExceptionType type = 3;
+  string detail = 4;
+  ExceptionStatus status = 5;
+  int64 student_id = 6;
+  string reported_by = 7;
+  string resolution = 8;
+  string resolved_by = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp resolved_at = 11;
+}
+
+message WaitRecord {
+  int64 id = 1;
+  int64 trip_id = 2;
+  int64 student_id = 3;
+  string student_name = 4;
+  int64 stop_id = 5;
+  string stop_name = 6;
+  google.protobuf.Timestamp wait_started_at = 7;
+  int32 wait_seconds = 8;       // 等待时长
+  int32 contacted_count = 9;    // 家长联系次数
+  bool skip_allowed = 10;       // 是否允许跳站
+  bool teacher_involved = 11;   // 是否需要班主任介入
+  bool resolved = 12;
+  string resolution = 13;
+}
+
+message GenerateTripsRequest {
+  string date = 1; // YYYY-MM-DD，空=今天
+}
+
+message GenerateTripsResponse {
+  repeated Trip trips = 1;
+}
+
+message ListTripsRequest {
+  string date = 1;
+  int64 route_id = 2;
+}
+
+message ListTripsResponse {
+  repeated Trip trips = 1;
+}
+
+message GetTripRequest {
+  int64 trip_id = 1;
+}
+
+message ConfirmVehicleRequest {
+  int64 trip_id = 1;
+  int64 driver_id = 2;
+  double fuel_liters = 3; // 出车前油量
+  string note = 4;        // 车况检查说明
+}
+
+message ConfirmRosterRequest {
+  int64 trip_id = 1;
+  int64 escort_id = 2;
+  string note = 3;
+}
+
+message StartTripRequest {
+  int64 trip_id = 1;
+}
+
+message ArriveStopRequest {
+  int64 trip_id = 1;
+  int64 stop_id = 2;
+}
+
+message BoardRequest {
+  int64 trip_id = 1;
+  int64 student_id = 2;
+  int64 stop_id = 3;
+  string dropped_off_by = 4; // 送站人（核验代送授权）
+  string actor = 5;          // 随车老师
+  bool force = 6;            // 坐错车等场景下强制登记
+}
+
+message BoardResponse {
+  TripStudent student = 1;
+  repeated string warnings = 2;
+  bool wrong_bus = 3;
+  Exception exception = 4;
+}
+
+message AlightRequest {
+  int64 trip_id = 1;
+  int64 student_id = 2;
+  int64 stop_id = 3;
+  string receiver_name = 4; // 接站人，空=无人接
+  string actor = 5;
+  bool confirm_unauthorized = 6; // 接站人不在授权名单仍确认放行
+}
+
+message AlightResponse {
+  TripStudent student = 1;
+  repeated string warnings = 2;
+  bool receiver_authorized = 3;
+  Exception exception = 4;
+}
+
+message MarkAbsentRequest {
+  int64 trip_id = 1;
+  int64 student_id = 2;
+  int64 stop_id = 3;
+  string actor = 4;
+}
+
+message RecordContactRequest {
+  int64 trip_id = 1;
+  int64 student_id = 2;
+  string phone = 3;
+  string result = 4; // 联系结果：无人接听/家长马上到/已出门等
+  string actor = 5;
+}
+
+message UpdateWaitRecordRequest {
+  int64 wait_record_id = 1;
+  int32 wait_seconds = 2;
+  bool skip_allowed = 3;
+  bool teacher_involved = 4;
+  bool resolved = 5;
+  string resolution = 6;
+}
+
+message CompleteTripRequest {
+  int64 trip_id = 1;
+}
+
+message HomeroomConfirmRequest {
+  int64 trip_id = 1;
+  int64 student_id = 2;
+  string teacher_name = 3;
+  HomeroomStatus status = 4;
+  string note = 5;
+}
+
+message GetTripTraceRequest {
+  int64 trip_id = 1;
+}
+
+message GetTripTraceResponse {
+  Trip trip = 1;
+  repeated TripEvent events = 2;
+}
+
+message ReportExceptionRequest {
+  int64 trip_id = 1;
+  ExceptionType type = 2;
+  string detail = 3;
+  string reported_by = 4;
+  int64 student_id = 5;
+  string new_departure = 6; // CLASS_RESCHEDULED 时的新发车时间 HH:MM
+}
+
+message ResolveExceptionRequest {
+  int64 exception_id = 1;
+  string resolution = 2;
+  string resolved_by = 3;
+}
+
+// 离线期间缓存的事件，恢复信号后批量补录
+message OfflineEvent {
+  string event_type = 1; // board | alight | absent
+  int64 student_id = 2;
+  int64 stop_id = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+  string note = 5;
+}
+
+message SyncOfflineEventsRequest {
+  int64 trip_id = 1;
+  repeated OfflineEvent events = 2;
+  string actor = 3;
+}
+
+message SyncOfflineEventsResponse {
+  int32 applied = 1;
+  repeated string errors = 2;
+}
+
+message ReportLeaveRequest {
+  int64 student_id = 1;
+  string date = 2;
+  string reason = 3;
+  string reported_by = 4;
+}
+
+// 兄弟姐妹同车登记
+message SiblingRideRequest {
+  int64 trip_id = 1;
+  repeated int64 student_ids = 2;
+  string note = 3;
+  string actor = 4;
+}
+
+// ============================================================================
+// 改线
+// ============================================================================
+
+message Reroute {
+  int64 id = 1;
+  int64 trip_id = 2;
+  RerouteReason reason = 3;
+  string detail = 4;
+  int32 from_seq = 5;
+  int32 added_delay_min = 6;
+  double extra_km = 7;
+  repeated int64 skip_stop_ids = 8;
+  int32 affected_count = 9;
+  double fuel_delta_liters = 10;
+  string initiated_by = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+message InitiateRerouteRequest {
+  int64 trip_id = 1;
+  RerouteReason reason = 2;
+  string detail = 3;
+  int32 added_delay_min = 4;     // 对未到达站点统一增加的分钟数
+  double extra_km = 5;           // 绕行增加的里程，用于油耗更新
+  repeated int64 skip_stop_ids = 6; // 因改线跳过的站点
+  string initiated_by = 7;
+}
+
+message RerouteResult {
+  Reroute reroute = 1;
+  repeated TripStudent affected_students = 2;
+  repeated Notification notifications = 3;
+  repeated StopEta updated_etas = 4;
+  double vehicle_fuel_liters = 5; // 改线后车辆剩余油量
+}
+
+message ListReroutesRequest {
+  int64 trip_id = 1;
+}
+
+message ListReroutesResponse {
+  repeated Reroute reroutes = 1;
+}
+
+// ============================================================================
+// 家长端
+// ============================================================================
+
+message Notification {
+  int64 id = 1;
+  int64 trip_id = 2;
+  int64 student_id = 3;
+  string phone = 4;
+  string ntype = 5;
+  string content = 6;
+  string status = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message StudentTripStatusRequest {
+  int64 student_id = 1;
+  string date = 2;
+  Direction direction = 3;
+}
+
+message StudentTripStatus {
+  Student student = 1;
+  Trip trip = 2;
+  TripStudent trip_student = 3;
+  StopEta stop_eta = 4;         // 该学生站点的预计到站时间
+  string escort_phone = 5;
+  repeated TripEvent recent_events = 6;
+}
+
+message ListNotificationsRequest {
+  string phone = 1;
+  string date = 2;
+}
+
+message ListNotificationsResponse {
+  repeated Notification notifications = 1;
+}
+
+message SelfPickupRequest {
+  int64 student_id = 1;
+  string date = 2;
+  string guardian_phone = 3;
+  string note = 4;
+}
+
+message GuardianSwapRequest {
+  int64 student_id = 1;
+  string date = 2;
+  string temp_name = 3;
+  string temp_phone = 4;
+  string relation = 5;
+  string guardian_phone = 6;
+}
+
+message ClubActivityRequest {
+  int64 student_id = 1;
+  string date = 2;
+  string club_name = 3;
+}
+
+// ============================================================================
+// 审计 / 点名
+// ============================================================================
+
+message RouteFulfillmentRequest {
+  int64 route_id = 1;
+  string date = 2;
+}
+
+message TripFulfillment {
+  int64 trip_id = 1;
+  Direction direction = 2;
+  TripStatus status = 3;
+  string planned_departure = 4;
+  google.protobuf.Timestamp actual_departure = 5;
+  google.protobuf.Timestamp actual_arrival = 6;
+  bool on_time_departure = 7;
+  int32 stops_total = 8;
+  int32 stops_arrived = 9;
+  int32 stops_skipped = 10;
+  int32 students_expected = 11;
+  int32 students_boarded = 12;
+  int32 students_alighted = 13;
+  int32 students_absent = 14;
+  int32 students_skipped = 15;
+  int32 reroute_count = 16;
+  int32 exception_count = 17;
+  int32 contact_count = 18;
+  int32 delay_min = 19;
+}
+
+message RouteFulfillment {
+  int64 route_id = 1;
+  string route_name = 2;
+  string date = 3;
+  repeated TripFulfillment trips = 4;
+}
+
+message TripRollcallRequest {
+  int64 trip_id = 1;
+}
+
+message RollcallEntry {
+  int64 student_id = 1;
+  string student_name = 2;
+  string class_name = 3;
+  string stop_name = 4;
+  TripStudentStatus status = 5;
+  google.protobuf.Timestamp eta = 6;
+  HomeroomStatus homeroom_status = 7;
+  repeated string guardian_phones = 8;
+}
+
+message TripRollcall {
+  int64 trip_id = 1;
+  TripStatus trip_status = 2;
+  repeated RollcallEntry entries = 3;
+}
+
+// ============================================================================
+// 服务定义
+// ============================================================================
+
+service AdminService {
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc CreateSchool(School) returns (School);
+  rpc CreateClass(Class) returns (Class);
+  rpc CreateStudent(Student) returns (Student);
+  rpc CreateGuardian(Guardian) returns (Guardian);
+  rpc CreatePickupAuthorization(PickupAuthorization) returns (PickupAuthorization);
+  rpc CreateStop(Stop) returns (Stop);
+  rpc CreateTimeWindow(TimeWindow) returns (TimeWindow);
+  rpc CreateVehicle(Vehicle) returns (Vehicle);
+  rpc CreateDriver(Driver) returns (Driver);
+  rpc CreateEscort(Escort) returns (Escort);
+  rpc CreateRoute(CreateRouteRequest) returns (Route);
+  rpc AssignStudentRoute(StudentRouteAssignment) returns (StudentRouteAssignment);
+  rpc CreateSchedule(Schedule) returns (Schedule);
+  rpc GetOverview(GetOverviewRequest) returns (Overview);
+}
+
+service TripService {
+  rpc GenerateTrips(GenerateTripsRequest) returns (GenerateTripsResponse);
+  rpc ListTrips(ListTripsRequest) returns (ListTripsResponse);
+  rpc GetTrip(GetTripRequest) returns (TripDetail);
+  rpc ConfirmVehicle(ConfirmVehicleRequest) returns (Trip);
+  rpc ConfirmRoster(ConfirmRosterRequest) returns (Trip);
+  rpc StartTrip(StartTripRequest) returns (Trip);
+  rpc ArriveStop(ArriveStopRequest) returns (TripDetail);
+  rpc BoardStudent(BoardRequest) returns (BoardResponse);
+  rpc AlightStudent(AlightRequest) returns (AlightResponse);
+  rpc MarkAbsent(MarkAbsentRequest) returns (WaitRecord);
+  rpc RecordContact(RecordContactRequest) returns (WaitRecord);
+  rpc UpdateWaitRecord(UpdateWaitRecordRequest) returns (WaitRecord);
+  rpc CompleteTrip(CompleteTripRequest) returns (Trip);
+  rpc HomeroomConfirm(HomeroomConfirmRequest) returns (Trip);
+  rpc GetTripTrace(GetTripTraceRequest) returns (GetTripTraceResponse);
+  rpc ReportException(ReportExceptionRequest) returns (Exception);
+  rpc ResolveException(ResolveExceptionRequest) returns (Exception);
+  rpc SyncOfflineEvents(SyncOfflineEventsRequest) returns (SyncOfflineEventsResponse);
+  rpc ReportLeave(ReportLeaveRequest) returns (LeaveRecord);
+  rpc RecordSiblingRide(SiblingRideRequest) returns (TripEvent);
+}
+
+service RerouteService {
+  rpc InitiateReroute(InitiateRerouteRequest) returns (RerouteResult);
+  rpc ListReroutes(ListReroutesRequest) returns (ListReroutesResponse);
+}
+
+service ParentService {
+  rpc GetStudentTripStatus(StudentTripStatusRequest) returns (StudentTripStatus);
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
+  rpc RequestSelfPickup(SelfPickupRequest) returns (TripStudent);
+  rpc RequestGuardianSwap(GuardianSwapRequest) returns (PickupAuthorization);
+  rpc ReportClubActivity(ClubActivityRequest) returns (TripStudent);
+}
+
+service AuditService {
+  rpc GetRouteFulfillment(RouteFulfillmentRequest) returns (RouteFulfillment);
+  rpc GetTripRollcall(TripRollcallRequest) returns (TripRollcall);
+}

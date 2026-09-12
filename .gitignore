@@ -1,0 +1,45 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*secret*
+*credential*
+*token*
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+target/
+gen/
+coverage/
+.cache/
+*.log
+tmp/
+temp/
+*.tmp
+*.sqlite
+*.sqlite3
+*.db
+
+# Local memory, skills, and Claude Code state
+memory/
+**/memory/
+skill/
+skills/
+**/skill/
+**/skills/
+.claude/
+CLAUDE.md
+*.jsonl
+*_traces/
+
+# QA and browser artifacts
+.playwright-cli/
+playwright-report/
+test-results/
+qa-report*
+QA*.md
+*.qa.*
