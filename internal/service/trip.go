@@ -188,6 +188,10 @@ func (s *Service) ConfirmVehicle(ctx context.Context, req *pb.ConfirmVehicleRequ
 	if err != nil {
 		return nil, err
 	}
+	// 接送角色绑定：仅排班绑定的司机可确认本车
+	if req.DriverId != t.DriverId {
+		return nil, errPermission(fmt.Sprintf("司机 %d 非本任务排班绑定司机（绑定司机 %d），无权确认车辆", req.DriverId, t.DriverId))
+	}
 	if t.Status != pb.TripStatus_TRIP_STATUS_SCHEDULED && t.Status != pb.TripStatus_TRIP_STATUS_PREPARING {
 		return nil, errPrecond("当前状态不允许确认车辆")
 	}
@@ -224,6 +228,10 @@ func (s *Service) ConfirmRoster(ctx context.Context, req *pb.ConfirmRosterReques
 	t, err := s.getTrip(ctx, s.db, req.TripId)
 	if err != nil {
 		return nil, err
+	}
+	// 接送角色绑定：仅排班绑定的随车老师可确认名单
+	if req.EscortId != t.EscortId {
+		return nil, errPermission(fmt.Sprintf("随车老师 %d 非本任务排班绑定随车老师（绑定随车老师 %d），无权确认名单", req.EscortId, t.EscortId))
 	}
 	if t.Status != pb.TripStatus_TRIP_STATUS_SCHEDULED && t.Status != pb.TripStatus_TRIP_STATUS_PREPARING {
 		return nil, errPrecond("当前状态不允许确认名单")

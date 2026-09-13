@@ -140,6 +140,10 @@ func (s *Service) ListNotifications(ctx context.Context, req *pb.ListNotificatio
 
 // RequestSelfPickup 家长改为自接（下午放学场景）。
 func (s *Service) RequestSelfPickup(ctx context.Context, req *pb.SelfPickupRequest) (*pb.TripStudent, error) {
+	// 家长身份绑定：仅该学生登记监护人可改为自接
+	if err := s.requireGuardian(ctx, s.db, req.StudentId, req.GuardianPhone); err != nil {
+		return nil, err
+	}
 	date := req.Date
 	if date == "" {
 		date = s.today()
@@ -183,6 +187,10 @@ func (s *Service) RequestSelfPickup(ctx context.Context, req *pb.SelfPickupReque
 func (s *Service) RequestGuardianSwap(ctx context.Context, req *pb.GuardianSwapRequest) (*pb.PickupAuthorization, error) {
 	if req.TempName == "" {
 		return nil, errInvalid("临时接送人姓名不能为空")
+	}
+	// 家长身份绑定：仅该学生登记监护人可发起换人
+	if err := s.requireGuardian(ctx, s.db, req.StudentId, req.GuardianPhone); err != nil {
+		return nil, err
 	}
 	date := req.Date
 	if date == "" {

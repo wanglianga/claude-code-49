@@ -55,6 +55,11 @@ docker compose ps           # 等待 app 健康（healthy）
 | 线路 | 一号线·早接（route_id=1）/ 一号线·晚送（route_id=2） | 5 个站点 |
 | 学生 | 王小明/王小红（兄妹，family_id=1001）、李华、张倩、刘洋、陈晨、赵磊、孙丽 | student_id=1..8 |
 
+## 权限绑定（越权拒绝）
+
+- **接送角色绑定**：`ConfirmVehicle` 仅接受排班绑定的 `driver_id`，`ConfirmRoster` 仅接受排班绑定的 `escort_id`；不符返回 `PermissionDenied`（HTTP 403），任务状态不变。
+- **家长身份绑定**：`RequestSelfPickup` / `RequestGuardianSwap` 要求 `guardian_phone` 为该学生登记监护人号码；未知号码返回 `PermissionDenied`，学生乘车状态不变。
+
 ## 关键业务流（可用演示台按钮或 curl 走通）
 
 以下以早接任务（trip_id=1）为例，HTTP 门面与 gRPC 接口一一对应：

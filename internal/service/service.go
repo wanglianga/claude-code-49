@@ -64,9 +64,10 @@ func (s *Service) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 // 通用错误
 // ---------------------------------------------------------------------------
 
-func errInvalid(msg string) error  { return status.Error(codes.InvalidArgument, msg) }
-func errNotFound(msg string) error { return status.Error(codes.NotFound, msg) }
-func errPrecond(msg string) error  { return status.Error(codes.FailedPrecondition, msg) }
+func errInvalid(msg string) error    { return status.Error(codes.InvalidArgument, msg) }
+func errNotFound(msg string) error   { return status.Error(codes.NotFound, msg) }
+func errPrecond(msg string) error    { return status.Error(codes.FailedPrecondition, msg) }
+func errPermission(msg string) error { return status.Error(codes.PermissionDenied, msg) }
 
 // ---------------------------------------------------------------------------
 // 枚举 <-> 数据库文本 映射
@@ -308,6 +309,22 @@ func tsVal(t time.Time) *timestamppb.Timestamp {
 		return nil
 	}
 	return timestamppb.New(t)
+}
+
+// requireGuardian 校验手机号是否为该学生登记的监护人（家长端身份绑定）。
+func (s *Service) requireGuardian(ctx context.Context, q Querier, studentID int64, phone string) error {
+	if phone == "" {
+		return errPermission("需提供学生监护人的手机号")
+	}
+	var n int64
+	if err := q.QueryRow(ctx, `SELECT count(*) FROM guardians WHERE student_id=$1 AND phone=$2`,
+		studentID, phone).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return errPermission(fmt.Sprintf("号码 %s 不是该学生的登记监护人，无权操作", phone))
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

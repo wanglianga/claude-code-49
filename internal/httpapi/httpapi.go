@@ -226,6 +226,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		httpCode = http.StatusNotFound
 	case codes.FailedPrecondition:
 		httpCode = http.StatusConflict
+	case codes.PermissionDenied:
+		httpCode = http.StatusForbidden
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(httpCode)

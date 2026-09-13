@@ -108,7 +108,21 @@ check "调课异常登记" "$R" 'EX_CLASS_RESCHEDULED'
 R=$(req GET /api/trips/2)
 check "晚送发车时间调整" "$R" '"planned_departure":"17:40"'
 
-echo "== 8. 下午场景 =="
+echo "== 8. 越权请求拒绝（角色/家长身份绑定） =="
+R=$(req POST /api/trips/2/confirm-vehicle '{"driver_id":2,"fuel_liters":100,"note":"非绑定司机"}')
+check "非绑定司机确认车辆被拒" "$R" 'PermissionDenied' '无权确认车辆'
+R=$(req POST /api/trips/2/confirm-roster '{"escort_id":2,"note":"非绑定随车老师"}')
+check "非绑定随车老师确认名单被拒" "$R" 'PermissionDenied' '无权确认名单'
+R=$(req GET /api/trips/2)
+check "任务状态保持未推进" "$R" 'TRIP_STATUS_SCHEDULED' '"vehicle_confirmed_at":null' '"roster_confirmed_at":null'
+R=$(req POST /api/students/4/self-pickup '{"guardian_phone":"00000000000","note":"未知号码"}')
+check "未知号码改自接被拒" "$R" 'PermissionDenied' '不是该学生的登记监护人'
+R=$(req GET "/api/students/4/trip-status?direction=DIRECTION_AFTERNOON_DROPOFF")
+check "学生4乘车状态保持应乘" "$R" 'TS_EXPECTED'
+R=$(req POST /api/students/7/guardian-swap '{"temp_name":"陌生人","temp_phone":"000","relation":"无","guardian_phone":"00000000000"}')
+check "未知号码发起换人被拒" "$R" 'PermissionDenied'
+
+echo "== 9. 下午场景 =="
 R=$(req POST /api/students/6/club '{"club_name":"足球社团"}')
 check "学生临时参加社团" "$R" 'TS_CLUB_ACTIVITY'
 R=$(req POST /api/students/4/self-pickup '{"guardian_phone":"13900030001","note":"今天妈妈自己接"}')
@@ -120,7 +134,7 @@ check "临时请假" "$R" '"leave_date"'
 R=$(req POST /api/trips/2/sibling-ride '{"student_ids":[1,2],"note":"兄妹同车回家","actor":"escort:1"}')
 check "兄弟姐妹同车登记" "$R" 'sibling_ride'
 
-echo "== 9. 晚送任务执行 =="
+echo "== 10. 晚送任务执行 =="
 req POST /api/trips/2/confirm-vehicle '{"driver_id":1,"fuel_liters":116}' > /dev/null
 req POST /api/trips/2/confirm-roster '{"escort_id":1}' > /dev/null
 R=$(req POST /api/trips/2/start '{}')
@@ -146,7 +160,7 @@ check "晚送缺乘跳站处置" "$R" '"resolved":true'
 R=$(req POST /api/trips/2/complete '{}')
 check "晚送任务完成" "$R" 'TRIP_STATUS_COMPLETED'
 
-echo "== 10. 早接送校+任务闭环 =="
+echo "== 11. 早接送校+任务闭环 =="
 for sid in 1 2 4 5 6 7; do req POST /api/trips/1/alight "{\"student_id\":$sid,\"stop_id\":5,\"receiver_name\":\"门卫张叔\",\"actor\":\"escort:1\",\"confirm_unauthorized\":true}" > /dev/null; done
 R=$(req POST /api/trips/1/complete '{}')
 check "早接任务完成" "$R" 'TRIP_STATUS_COMPLETED'
@@ -155,7 +169,7 @@ for sid in 1 2 3 4 5 6 7 8; do
 done
 check "班主任全部确认->任务闭环" "$R" 'TRIP_STATUS_CLOSED'
 
-echo "== 11. 学校与教育局视角 =="
+echo "== 12. 学校与教育局视角 =="
 R=$(req GET /api/trips/1/trace)
 check "全程轨迹(>20事件)" "$R" 'vehicle_confirmed' 'student_boarded' 'parent_contacted' 'reroute_initiated' 'offline_sync' 'homeroom_confirmed' 'trip_closed'
 R=$(req GET /api/trips/1/rollcall)
